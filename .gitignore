@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Databases
+*.db
+*.sqlite3
+
+# Environment
+.env
+
+# Docker
+.docker_data/
+
+# IDEs
+.idea/
+.vscode/
+
+# Project specific
+appDataDir/
+brain/

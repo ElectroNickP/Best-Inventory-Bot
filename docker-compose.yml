@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  inventory-bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - DB_URL=sqlite+aiosqlite:///./inventory.db
+      - INITIAL_ADMIN_IDS=${INITIAL_ADMIN_IDS}
+      - INITIAL_ADMIN_USERNAMES=${INITIAL_ADMIN_USERNAMES}
+    volumes:
+      - ./inventory.db:/app/inventory.db
+
