@@ -144,12 +144,12 @@ def _user_short(user) -> str:
     return name or f"ID {user.telegram_id}"
 
 
-async def _build_overview_text_and_kb(session_factory):
+async def _build_overview_text_and_kb():
     """Build overview: on-hands items with real names + date taken."""
     from app.db.repositories import ItemRepository, TransactionRepository, CategoryRepository
     from app.db.models import ItemStatus
 
-    async with session_factory() as session:
+    async with get_session() as session:
         item_repo = ItemRepository(session)
         tx_repo = TransactionRepository(session)
         cat_repo = CategoryRepository(session)
@@ -193,8 +193,7 @@ async def inventory_overview(message: Message) -> None:
     if not await _require_admin(message):
         return
 
-    from app.db.session import get_session_factory
-    text, kb_items, available_count = await _build_overview_text_and_kb(get_session_factory)
+    text, kb_items, available_count = await _build_overview_text_and_kb()
     await message.answer(
         text,
         reply_markup=overview_on_hands_keyboard(kb_items),
@@ -203,8 +202,7 @@ async def inventory_overview(message: Message) -> None:
 
 @admin_router.callback_query(F.data == "ovr_back")
 async def ovr_back_to_overview(callback: CallbackQuery) -> None:
-    from app.db.session import get_session_factory
-    text, kb_items, _ = await _build_overview_text_and_kb(get_session_factory)
+    text, kb_items, _ = await _build_overview_text_and_kb()
     await callback.message.edit_text(text, reply_markup=overview_on_hands_keyboard(kb_items))
     await callback.answer()
 
