@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from sqlalchemy import Select, delete, select, update
+from sqlalchemy import Select, delete, or_, select, update
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -208,7 +208,13 @@ class ItemRepository:
         return result.scalars().all()
 
     async def get_by_id(self, item_id: int) -> models.Item | None:
-        return await self.session.get(models.Item, item_id)
+        stmt = (
+            select(models.Item)
+            .where(models.Item.id == item_id)
+            .options(joinedload(models.Item.current_holder))
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def create(
         self,
@@ -360,3 +366,51 @@ class AdminLogRepository:
         entry = models.AdminLog(admin_id=admin_id, action=action, details=details)
         self.session.add(entry)
         return entry
+
+
+class ProblemReportRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self, item_id: int, user_id: int, description: str
+    ) -> models.ProblemReport:
+        report = models.ProblemReport(
+            item_id=item_id,
+            user_id=user_id,
+            description=description,
+        )
+        self.session.add(report)
+        return report
+
+    async def list_unresolved(self) -> Sequence[models.ProblemReport]:
+        stmt = (
+            select(models.ProblemReport)
+            .where(models.ProblemReport.is_resolved == False)
+            .options(
+                joinedload(models.ProblemReport.item),
+                joinedload(models.ProblemReport.user),
+            )
+            .order_by(models.ProblemReport.created_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().unique().all()
+
+    async def resolve(self, report_id: int) -> bool:
+        report = await self.session.get(models.ProblemReport, report_id)
+        if report:
+            report.is_resolved = True
+            return True
+        return False
+
+    async def get_by_id(self, report_id: int) -> models.ProblemReport | None:
+        stmt = (
+            select(models.ProblemReport)
+            .where(models.ProblemReport.id == report_id)
+            .options(
+                joinedload(models.ProblemReport.item),
+                joinedload(models.ProblemReport.user),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()

@@ -24,6 +24,7 @@ def admin_main_keyboard() -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text="📂 Категории"), KeyboardButton(text="📋 Позиции")],
         [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="👥 Пользователи")],
+        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="⚠️ Жалобы")],
         [KeyboardButton(text="📊 Обзор"), KeyboardButton(text="← Вернуться в меню")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=False)
@@ -84,6 +85,9 @@ def item_actions_keyboard(
         buttons.append(
             [InlineKeyboardButton(text="↩️ Вернуть позицию", callback_data=f"return:{item_id}")]
         )
+    buttons.append(
+        [InlineKeyboardButton(text="⚠️ Сообщить о проблеме", callback_data=f"report_prob:{item_id}")]
+    )
     back_data = f"back:items:{item_id}"
     buttons.append(
         [InlineKeyboardButton(text="← Назад к списку", callback_data=back_data)]
@@ -255,6 +259,11 @@ def admin_user_actions_keyboard(user_id: int, is_admin: bool) -> InlineKeyboardM
                     text=toggle_text, callback_data=f"adm_user_toggle:{user_id}"
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text="✉️ Написать пользователю", callback_data=f"adm_user_msg:{user_id}"
+                )
+            ],
             [InlineKeyboardButton(text="← Назад к пользователям", callback_data="adm_back:users")],
         ]
     )
@@ -381,3 +390,32 @@ def admin_search_results_keyboard(
         [InlineKeyboardButton(text="← Назад", callback_data="adm_cancel")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_message_reply_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✉️ Ответить", callback_data="user_reply_adm"
+                )
+            ]
+        ]
+    )
+
+
+def admin_problem_report_keyboard(report_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Решено", callback_data=f"adm_prob_resolve:{report_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="← Назад к списку", callback_data="adm_prob_list"
+                )
+            ],
+        ]
+    )

@@ -1,4 +1,4 @@
-from __future__ import annotations
+import logging
 
 from dataclasses import dataclass
 
@@ -9,6 +9,7 @@ from app.db.models import ItemStatus, TransactionAction
 from app.db.repositories import (
     CategoryRepository,
     ItemRepository,
+    ProblemReportRepository,
     TransactionRepository,
     UserRepository,
 )
@@ -33,6 +34,10 @@ class InventoryService:
     @property
     def transactions(self) -> TransactionRepository:
         return TransactionRepository(self.session)
+
+    @property
+    def problem_reports(self) -> ProblemReportRepository:
+        return ProblemReportRepository(self.session)
 
     async def ensure_user(
         self,
@@ -92,6 +97,10 @@ class InventoryService:
             photo_file_id=photo_file_id,
             comment=comment,
         )
+        logging.info(
+            f"USER_TAKE: User {user.id} ({user.username or user.telegram_id}) "
+            f"took item {item.id} ('{item.name}')"
+        )
         await self.session.flush()
         return tx
 
@@ -121,6 +130,30 @@ class InventoryService:
             photo_file_id=photo_file_id,
             comment=comment,
         )
+        logging.info(
+            f"USER_RETURN: User {user.id} ({user.username or user.telegram_id}) "
+            f"returned item {item.id} ('{item.name}')"
+        )
         await self.session.flush()
         return tx
 
+    async def report_problem(
+        self,
+        item_id: int,
+        user: models.User,
+        description: str,
+    ) -> models.ProblemReport:
+        item = await self.items.get_by_id(item_id)
+        if item is None:
+            raise ValueError("Item not found")
+
+        report = await self.problem_reports.create(
+            item_id=item_id,
+            user_id=user.id,
+            description=description,
+        )
+        logging.info(
+            f"PROBLEM_REPORT: User {user.id} reported problem on item {item.id} ('{item.name}'): {description[:50]}..."
+        )
+        await self.session.flush()
+        return report

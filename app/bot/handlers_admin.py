@@ -23,6 +23,8 @@ from app.bot.keyboards import (
     overview_on_hands_keyboard,
     tx_photo_keyboard,
     admin_search_results_keyboard,
+    admin_problem_report_keyboard,
+    admin_message_reply_keyboard,
 )
 from app.bot.states import (
     AdminCreateCategory,
@@ -30,6 +32,7 @@ from app.bot.states import (
     AdminEditCategory,
     AdminEditItem,
     AdminSearch,
+    AdminMessagingStates,
 )
 from app.config import get_settings
 from app.core.admin_service import AdminService
@@ -825,8 +828,13 @@ async def adm_item_detail(callback: CallbackQuery) -> None:
     }
     status_label = STATUS_LABELS.get(item.status.value, item.status.value)
     holder_info = ""
-    if item.current_holder_id:
-        holder_info = f"\nДержатель: user_id={item.current_holder_id}"
+    if item.current_holder:
+        user = item.current_holder
+        name_str = f"{user.first_name} {user.last_name or ''}".strip()
+        user_str = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
+        holder_info = f"\nДержатель: {name_str} ({user_str})"
+    elif item.current_holder_id:
+        holder_info = f"\nДержатель: ID={item.current_holder_id}"
 
     code_info = f"\nКод: <code>{item.inventory_code}</code>" if item.inventory_code else ""
 
@@ -1241,6 +1249,160 @@ async def adm_toggle_admin(callback: CallbackQuery) -> None:
             text,
             reply_markup=admin_user_actions_keyboard(target_user_id, user.is_admin),
         )
+
+
+# ── Statistics ──────────────────────────────────────────────────────────────
+
+
+@admin_router.message(F.text == "📊 Статистика")
+async def admin_show_statistics(message: Message) -> None:
+    async with get_session() as session:
+        svc = AdminService(session)
+        stats = await svc.get_statistics()
+
+    sc = stats["status_counts"]
+    status_text = (
+        f"✅ Доступно: {sc.get('available', 0)}\n"
+        f"🔴 Выдано: {sc.get('taken', 0)}\n"
+        f"🔧 На сервисе: {sc.get('maintenance', 0)}\n"
+        f"❓ Утеряно: {sc.get('lost', 0)}"
+    )
+
+    top_items_text = "\n".join(
+        [f"• {i['name']}: {i['count']} раз(а)" for i in stats["top_items"]]
+    ) or "Нет данных"
+
+    top_users_text = "\n".join(
+        [f"• {u['name']}: {u['count']} раз(а)" for u in stats["top_users"]]
+    ) or "Нет данных"
+
+    text = (
+        f"<b>📊 СТАТИСТИКА БОТА</b>\n\n"
+        f"<b>📈 По статусам:</b>\n{status_text}\n\n"
+        f"<b>🔥 Популярные предметы:</b>\n{top_items_text}\n\n"
+        f"<b>🏆 Активные пользователи:</b>\n{top_users_text}"
+    )
+    await message.answer(text)
+
+
+# ── Problem Reports ──────────────────────────────────────────────────────────
+
+
+@admin_router.message(F.text == "⚠️ Жалобы")
+async def admin_list_problems(message: Message) -> None:
+    async with get_session() as session:
+        svc = AdminService(session)
+        reports = await svc.list_unresolved_problems()
+
+    if not reports:
+        await message.answer("✅ Неразрешенных жалоб нет.")
+        return
+
+    text = "⚠️ <b>СПИСОК ЖАЛОБ:</b>\n\n"
+    for r in reports:
+        user_str = f"{r.user.first_name} (@{r.user.username})"
+        text += (
+            f"📍 <b>{r.item.name}</b>\n"
+            f"От: {user_str}\n"
+            f"Суть: {r.description}\n"
+            f"Дата: {r.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+            f"Действие: /resolve_{r.id}\n\n"
+        )
+
+    await message.answer(text)
+
+
+@admin_router.message(F.text.startswith("/resolve_"))
+async def admin_resolve_problem_cmd(message: Message) -> None:
+    try:
+        report_id = int(message.text.split("_")[1])
+    except (IndexError, ValueError):
+        return
+
+    async with get_session() as session:
+        inv_svc = InventoryService(session)
+        user = await inv_svc.ensure_user(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+            initial_admin_ids=get_settings().initial_admin_ids,
+            initial_admin_usernames=get_settings().initial_admin_usernames,
+        )
+        if not user.is_admin:
+            return
+
+        svc = AdminService(session)
+        ok = await svc.resolve_problem(user, report_id)
+        if ok:
+            await session.commit()
+            await message.answer(f"✅ Жалоба #{report_id} отмечена как решенная.")
+        else:
+            await message.answer("❌ Жалоба не найдена.")
+
+
+# ── Direct Messaging ─────────────────────────────────────────────────────────
+
+
+@admin_router.callback_query(F.data.startswith("adm_user_msg:"))
+async def admin_user_msg_start(callback: CallbackQuery, state: FSMContext) -> None:
+    target_user_id = int(callback.data.split(":")[1])
+    async with get_session() as session:
+        svc = AdminService(session)
+        user = await svc.users.get_by_id(target_user_id)
+
+    if not user:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+
+    await state.update_data(target_user_id=target_user_id)
+    await state.set_state(AdminMessagingStates.waiting_for_text)
+    await callback.message.answer(
+        f"✉️ <b>Отправка сообщения пользователю {user.first_name}:</b>\n\n"
+        "Введите текст сообщения. Пользователь сможет ответить на него.",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@admin_router.message(AdminMessagingStates.waiting_for_text)
+async def admin_user_msg_send(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    target_user_id = data["target_user_id"]
+    text = message.text
+
+    if not text:
+        await message.answer("⚠️ Сообщение не может быть пустым.")
+        return
+
+    async with get_session() as session:
+        inv_svc = InventoryService(session)
+        admin = await inv_svc.ensure_user(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+            initial_admin_ids=get_settings().initial_admin_ids,
+            initial_admin_usernames=get_settings().initial_admin_usernames,
+        )
+        svc = AdminService(session)
+        target_user = await svc.users.get_by_id(target_user_id)
+
+        if not target_user:
+            await message.answer("❌ Ошибка: целевой пользователь не найден.")
+            await state.clear()
+            return
+
+        ok = await svc.send_user_message(
+            message.bot, admin, target_user, text, reply_markup=admin_message_reply_keyboard()
+        )
+        if ok:
+            await session.commit()
+            await message.answer("✅ Сообщение успешно отправлено.")
+        else:
+            await message.answer("❌ Не удалось отправить сообщение (возможно, бот заблокирован пользователем).")
+
+    await state.clear()
 
 
 # ── Universal cancel ──────────────────────────────────────────────────────────

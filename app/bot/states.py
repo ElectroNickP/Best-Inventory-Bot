@@ -36,3 +36,15 @@ class AdminEditItem(StatesGroup):
 
 class AdminSearch(StatesGroup):
     waiting_for_query = State()
+
+
+class ProblemReportStates(StatesGroup):
+    waiting_for_description = State()
+
+
+class AdminMessagingStates(StatesGroup):
+    waiting_for_text = State()
+
+
+class UserReplyStates(StatesGroup):
+    waiting_for_text = State()

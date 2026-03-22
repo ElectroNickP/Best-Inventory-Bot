@@ -11,7 +11,7 @@ from app.bot.keyboards import (
     items_keyboard,
     main_menu_keyboard,
 )
-from app.bot.states import ReturnItemStates, TakeItemStates
+from app.bot.states import ProblemReportStates, ReturnItemStates, TakeItemStates, UserReplyStates
 from app.config import get_settings
 from app.core.admin_service import AdminService
 from app.core.inventory_service import InventoryService
@@ -188,10 +188,17 @@ async def on_item_selected(callback: CallbackQuery) -> None:
         "maintenance": "🔧 На обслуживании",
     }
     code_info = f"\nИнв. код: <code>{item.inventory_code}</code>" if item.inventory_code else ""
+    holder_info = ""
+    if item.status == ItemStatus.TAKEN and item.current_holder:
+        user_holder = item.current_holder
+        name_str = f"{user_holder.first_name} {user_holder.last_name or ''}".strip()
+        holder_info = f"\n📦 Сейчас у: {name_str}"
+
     text = (
         f"<b>📦 {item.name}</b>\n"
         f"Статус: {STATUS_LABELS.get(item.status.value, item.status.value)}"
         f"{code_info}"
+        f"{holder_info}"
     )
     await callback.message.edit_text(
         text,
@@ -382,3 +389,97 @@ async def user_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.message.edit_text("❌ Действие отменено.")
     await callback.answer()
+
+
+# ── Problem Reporting ────────────────────────────────────────────────────────
+
+
+@user_router.callback_query(F.data.startswith("report_prob:"))
+async def user_report_problem_start(callback: CallbackQuery, state: FSMContext) -> None:
+    item_id = int(callback.data.split(":")[1])
+    await state.update_data(item_id=item_id)
+    await state.set_state(ProblemReportStates.waiting_for_description)
+    await callback.message.answer(
+        "📝 Пожалуйста, опишите проблему с оборудованием.\n"
+        "Ваше сообщение будет передано администраторам.",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@user_router.message(ProblemReportStates.waiting_for_description)
+async def user_report_problem_submit(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    item_id = data.get("item_id")
+    if not item_id:
+        await message.answer("❌ Ошибка: предмет не найден. Попробуйте снова.")
+        await state.clear()
+        return
+
+    description = message.text
+    if not description:
+        await message.answer("⚠️ Описание не может быть пустым.")
+        return
+
+    async with get_session() as session:
+        inv_svc = InventoryService(session)
+        adm_svc = AdminService(session)
+        user = await inv_svc.ensure_user(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+            initial_admin_ids=get_settings().initial_admin_ids,
+            initial_admin_usernames=get_settings().initial_admin_usernames,
+        )
+        await inv_svc.report_problem(item_id, user, description)
+        item = await inv_svc.items.get_by_id(item_id)
+        await session.commit()
+
+        # Notify admins
+        admin_text = (
+            f"⚠️ <b>НОВАЯ ЖАЛОБА</b>\n\n"
+            f"<b>Предмет:</b> {item.name if item else 'Unknown'}\n"
+            f"<b>От:</b> {user.first_name} {user.last_name or ''} (@{user.username})\n"
+            f"<b>Проблема:</b> {description}"
+        )
+        await adm_svc.notify_admins(message.bot, admin_text)
+
+    await state.clear()
+    await message.answer(
+        "✅ Спасибо! Ваша жалоба принята и передана администраторам.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+# ── Reply to Admin ──────────────────────────────────────────────────────────
+
+
+@user_router.callback_query(F.data == "user_reply_adm")
+async def user_reply_adm_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(UserReplyStates.waiting_for_text)
+    await callback.message.answer(
+        "📝 <b>Введите ваш ответ администратору:</b>\n\n"
+        "Ваш ответ будет переслан всем администраторам.",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@user_router.message(UserReplyStates.waiting_for_text)
+async def user_reply_adm_submit(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        await message.answer("⚠️ Пожалуйста, введите текстовое сообщение.")
+        return
+
+    user = await _ensure_user(message.from_user)
+    user_name = f"{user.first_name} (@{user.username})" if user.username else user.first_name
+
+    async with get_session() as session:
+        admin_svc = AdminService(session)
+        await admin_svc.notify_admins(
+            bot=message.bot,
+            text=f"✉️ <b>ОТВЕТ ОТ ПОЛЬЗОВАТЕЛЯ {user_name}:</b>\n\n{message.text}"
+        )
+
+    await message.answer("✅ Ваш ответ отправлен администраторам.")
+    await state.clear()

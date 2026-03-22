@@ -88,7 +88,7 @@ class Item(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     inventory_code: Mapped[str | None] = mapped_column(String(64), unique=True)
     status: Mapped[ItemStatus] = mapped_column(
-        Enum(ItemStatus),
+        Enum(ItemStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=ItemStatus.AVAILABLE,
         nullable=False,
     )
@@ -123,7 +123,7 @@ class Transaction(Base):
         nullable=False,
     )
     action: Mapped[TransactionAction] = mapped_column(
-        Enum(TransactionAction),
+        Enum(TransactionAction, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
     )
     photo_file_id: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -154,4 +154,28 @@ class AdminLog(Base):
         default=datetime.utcnow,
         nullable=False,
     )
+
+
+class ProblemReport(Base):
+    __tablename__ = "problem_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    is_resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    item: Mapped["Item"] = relationship()
+    user: Mapped["User"] = relationship()
 
